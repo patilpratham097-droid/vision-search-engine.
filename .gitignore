@@ -1,3 +1,5 @@
 *.bin
 *.jpg
 search_engine*
+image_mapping.txt
+dataset/
