@@ -3,38 +3,54 @@ import torchvision.models as models
 import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
+import glob
 import os
 
-# Load the lightweight AI model (MobileNetV2)
 print("Loading AI model...")
 model = models.mobilenet_v2(pretrained=True)
-'''It is a placeholder or consider a empty pipe in which output is same  as input.
-It is used because torch expect forward function to be non empty , otherwise it will throw error 
-'''
-model.classifier = torch.nn.Identity() # Remove the text labels, keep only the math
-model.eval() # Set to evaluation mode (saves memory)
+model.classifier = torch.nn.Identity() 
+model.eval()
 
-# Standardize the image (crop and resize to 224x224)
 preprocess = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    transforms.Resize(256), transforms.CenterCrop(224),
+    transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-# Create a dummy image to test our engine
-test_image_path = 'test_image.jpg'
-Image.new('RGB', (500, 500), color='red').save(test_image_path)
+# --- UPDATE: Use recursive glob to find images in subfolders ---
+# The '**' means "look in all subfolders"
+# Note: We check for multiple extensions just in case some are .jpeg or .png
+image_paths = []
+for ext in ('*.jpg', '*.jpeg', '*.png'):
+    image_paths.extend(glob.glob(f"dataset/**/{ext}", recursive=True))
 
-# Convert the image to a vector
-print("Extracting vector fingerprint...")
-img = Image.open(test_image_path).convert('RGB')
-img_tensor = preprocess(img).unsqueeze(0)
+all_vectors = []
 
-with torch.no_grad(): # Don't track gradients, saves RAM
-    vector = model(img_tensor).squeeze().numpy()
+print(f"Found {len(image_paths)} images. Extracting features...")
 
-# Save the output for C++ to read later
-output_file = 'embeddings.bin'
-vector.astype(np.float32).tofile(output_file)
-print(f"Success! Saved a {len(vector)}-dimension vector to {output_file}")
+if len(image_paths) == 0:
+    print("Error: No images found. Make sure your images are inside the 'dataset' folder.")
+    exit()
+
+# Save the order of images
+with open("image_mapping.txt", "w") as f:
+    for idx, path in enumerate(image_paths):
+        try:
+            img = Image.open(path).convert('RGB')
+            img_tensor = preprocess(img).unsqueeze(0)
+            with torch.no_grad():
+                vector = model(img_tensor).squeeze().numpy()
+            all_vectors.append(vector)
+            f.write(path + "\n")
+            
+            # Print progress every 100 images
+            if (idx + 1) % 100 == 0:
+                print(f"Processed {idx + 1}/{len(image_paths)} images...")
+                
+        except Exception as e:
+            print(f"Error processing {path}: {e}")
+
+# Save the massive matrix of all vectors
+if all_vectors:
+    np_vectors = np.array(all_vectors, dtype=np.float32)
+    np_vectors.tofile("database.bin")
+    print(f"Database built! Saved {len(all_vectors)} vectors to database.bin")
